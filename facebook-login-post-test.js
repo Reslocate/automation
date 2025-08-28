@@ -385,156 +385,430 @@ class FacebookDebugPro {
         return false;
       }
 
-      // Wait for feed to fully load
-      await new Promise(resolve => setTimeout(resolve, 5000));
+      // Wait for feed to fully load and ensure we're on the right page
+      await new Promise(resolve => setTimeout(resolve, 3000));
+      
+      // Navigate to Facebook home if not already there
+      const currentUrl = await this.page.url();
+      if (!currentUrl.includes('facebook.com') || currentUrl.includes('login')) {
+        console.log('🔄 Navigating to Facebook home...');
+        await this.page.goto('https://www.facebook.com', { waitUntil: 'networkidle2', timeout: 30000 });
+        await new Promise(resolve => setTimeout(resolve, 3000));
+      }
       
       console.log('🔍 Current URL before posting:', await this.page.url());
 
-      // Facebook's primary post box selector
-      const postBoxSelector = '[role="textbox"][contenteditable="true"]';
-      console.log(`🧪 Looking for post box with selector: ${postBoxSelector}`);
+      // Enhanced post box discovery with multiple strategies
+      const postBoxSelectors = [
+        // Modern Facebook selectors
+        '[role="textbox"][contenteditable="true"]',
+        'div[contenteditable="true"][role="textbox"]',
+        '[aria-label*="What\'s on your mind"]',
+        '[data-testid="status-attachment-mentions-input"]',
+        '[placeholder*="What\'s on your mind"]',
+        
+        // Legacy selectors
+        'textarea[name="xhpc_message"]',
+        'div[data-testid="react-composer-root"]',
+        '[data-pagelet="ProfileComposer"]',
+        
+        // Fallback selectors
+        'div[contenteditable="true"]',
+        '[role="textbox"]'
+      ];
       
-      // Ensure post box is visible
-      try {
-        await this.page.waitForSelector(postBoxSelector, { visible: true, timeout: 15000 });
-      } catch (error) {
+      let postBoxFound = false;
+      let workingSelector = null;
+      
+      // Try each selector until we find one that works
+      for (const selector of postBoxSelectors) {
+        try {
+          console.log(`🧪 Trying post box selector: ${selector}`);
+          await this.page.waitForSelector(selector, { visible: true, timeout: 5000 });
+          
+          // Verify the element is actually clickable and visible
+          const isClickable = await this.page.evaluate(sel => {
+            const element = document.querySelector(sel);
+            if (!element) return false;
+            
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            
+            return rect.width > 0 && 
+                   rect.height > 0 && 
+                   style.display !== 'none' && 
+                   style.visibility !== 'hidden' &&
+                   !element.disabled;
+          }, selector);
+          
+          if (isClickable) {
+            workingSelector = selector;
+            postBoxFound = true;
+            console.log(`✅ Found working post box: ${selector}`);
+            break;
+          }
+        } catch (error) {
+          console.log(`❌ Post box selector failed: ${selector}`);
+        }
+      }
+      
+      if (!postBoxFound) {
+        console.log('❌ No post box found - trying alternative approach...');
+        
+        // Alternative: Look for "Create Post" button first
+        const createPostSelectors = [
+          '[aria-label="Create a post"]',
+          'button[aria-label="Create a post"]',
+          'div[aria-label="Create a post"]',
+          '[data-testid="react-composer-post-button"]'
+        ];
+        
+        for (const selector of createPostSelectors) {
+          try {
+            console.log(`🧪 Trying create post button: ${selector}`);
+            await this.page.waitForSelector(selector, { visible: true, timeout: 3000 });
+            await this.page.click(selector);
+            console.log(`✅ Clicked create post button: ${selector}`);
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Now try to find the post box again
+            for (const postSelector of postBoxSelectors.slice(0, 3)) {
+              try {
+                await this.page.waitForSelector(postSelector, { visible: true, timeout: 3000 });
+                workingSelector = postSelector;
+                postBoxFound = true;
+                console.log(`✅ Found post box after clicking create: ${postSelector}`);
+                break;
+              } catch {}
+            }
+            if (postBoxFound) break;
+          } catch {}
+        }
+      }
+      
+      if (!postBoxFound) {
         console.log('❌ Post box not found - taking screenshot for analysis');
         await this.page.screenshot({ path: './debug-no-postbox.png', fullPage: true });
         
-        // Scan for any plausible post boxes
-        const possibleBoxes = await this.page.evaluate(() => {
-          const candidates = [
-            '[role="textbox"]',
-            '[contenteditable="true"]',
-            'textarea',
-            '[aria-label*="post"]',
-            '[placeholder*="what\'s on your mind"]'
-          ];
+        // Debug: Show all available interactive elements
+        const availableElements = await this.page.evaluate(() => {
+          const elements = [];
           
-          const results = [];
-          candidates.forEach(selector => {
-            const elements = Array.from(document.querySelectorAll(selector));
-            elements.forEach(el => {
-              if (el && el.offsetWidth > 0 && el.offsetHeight > 0) {
-                results.push({
-                  selector: selector,
-                  textContent: el.textContent?.substring(0, 100) || '',
-                  tagName: el.tagName,
-                  attributes: Array.from(el.attributes).map(a => `${a.name}=${a.value}`)
-                });
-              }
-            });
+          // Check for contenteditable divs
+          document.querySelectorAll('div[contenteditable="true"]').forEach(el => {
+            if (el.offsetWidth > 0 && el.offsetHeight > 0) {
+              elements.push({
+                type: 'contenteditable',
+                selector: el.id ? `#${el.id}` : `div[contenteditable="true"]`,
+                text: el.textContent?.substring(0, 50) || '',
+                ariaLabel: el.getAttribute('aria-label') || ''
+              });
+            }
           });
-          return results;
+          
+          // Check for textboxes
+          document.querySelectorAll('[role="textbox"]').forEach(el => {
+            if (el.offsetWidth > 0 && el.offsetHeight > 0) {
+              elements.push({
+                type: 'textbox',
+                selector: el.id ? `#${el.id}` : `[role="textbox"]`,
+                text: el.textContent?.substring(0, 50) || '',
+                ariaLabel: el.getAttribute('aria-label') || ''
+              });
+            }
+          });
+          
+          return elements;
         });
         
-        console.log('🕵️  Potential post elements found:', possibleBoxes.length);
-        if (possibleBoxes.length > 0) {
-          console.log('Top candidates:', JSON.stringify(possibleBoxes.slice(0, 3), null, 2));
-        }
-        
+        console.log('🕵️ Available interactive elements:', availableElements);
         return false;
       }
 
-      // Scroll into view - modern Facebook requires scrolling for interactive elements
+      // Scroll the post box into view and focus
       await this.page.evaluate(selector => {
         const el = document.querySelector(selector);
         if (el) {
           el.scrollIntoView({ behavior: "smooth", block: "center" });
         }
-      }, postBoxSelector);
+      }, workingSelector);
       
       await new Promise(resolve => setTimeout(resolve, 1000));
 
-      // Focus and click with careful timing
-      await this.page.click(postBoxSelector, { clickCount: 1, delay: 500 });
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      // Enhanced clicking and typing approach
+      try {
+        // Multiple click attempts to ensure focus
+        console.log('🖱️ Clicking post box to focus...');
+        await this.page.click(workingSelector, { clickCount: 1, delay: 100 });
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Double-click to ensure activation
+        await this.page.click(workingSelector, { clickCount: 2, delay: 100 });
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Focus using JavaScript as backup
+        await this.page.evaluate(selector => {
+          const element = document.querySelector(selector);
+          if (element) {
+            element.focus();
+            element.click();
+          }
+        }, workingSelector);
+        
+        await new Promise(resolve => setTimeout(resolve, 1000));
 
-      // Clear any existing text
-      await this.page.keyboard.down('Control');
-      await this.page.keyboard.press('A');
-      await this.page.keyboard.up('Control');
-      await this.page.keyboard.press('Backspace');
-      
-      await new Promise(resolve => setTimeout(resolve, 500));
+        // Clear any existing content with multiple methods
+        console.log('🧹 Clearing existing content...');
+        
+        // Method 1: Keyboard shortcuts
+        await this.page.keyboard.down('Control');
+        await this.page.keyboard.press('A');
+        await this.page.keyboard.up('Control');
+        await this.page.keyboard.press('Backspace');
+        await new Promise(resolve => setTimeout(resolve, 300));
+        
+        // Method 2: JavaScript clear (for contenteditable divs)
+        await this.page.evaluate(selector => {
+          const element = document.querySelector(selector);
+          if (element) {
+            if (element.tagName === 'DIV' && element.contentEditable === 'true') {
+              element.innerHTML = '';
+              element.textContent = '';
+            } else if (element.tagName === 'TEXTAREA' || element.tagName === 'INPUT') {
+              element.value = '';
+            }
+          }
+        }, workingSelector);
+        
+        await new Promise(resolve => setTimeout(resolve, 500));
 
-      // Type caption with human-like delay
-      console.log('⌨️  Typing message with human-like delays...');
-      for (const char of message) {
-        await this.page.keyboard.type(char, { delay: 30 + Math.random() * 50 });
+        // Enhanced typing with better human simulation
+        console.log('⌨️ Typing message with enhanced human simulation...');
+        
+        // Type character by character with realistic delays
+        for (let i = 0; i < message.length; i++) {
+          const char = message[i];
+          
+          // Vary typing speed based on character type
+          let delay = 50 + Math.random() * 100; // Base delay
+          
+          if (char === ' ') {
+            delay = 100 + Math.random() * 150; // Longer pause for spaces
+          } else if (char.match(/[.!?]/)) {
+            delay = 200 + Math.random() * 300; // Longer pause for punctuation
+          } else if (char.match(/[A-Z]/)) {
+            delay = 80 + Math.random() * 120; // Slightly longer for capitals
+          }
+          
+          await this.page.keyboard.type(char, { delay: delay });
+          
+          // Random micro-pauses to simulate thinking
+          if (Math.random() > 0.85) {
+            await new Promise(resolve => setTimeout(resolve, 200 + Math.random() * 500));
+          }
+        }
+        
+        console.log('✅ Message typed successfully');
+        
+      } catch (error) {
+        console.log('❌ Error during typing:', error.message);
+        return false;
       }
 
-      // Wait a little to stabilize UI
-      await new Promise(resolve => setTimeout(resolve, 1500));
+      // Wait for UI to stabilize after typing
+      await new Promise(resolve => setTimeout(resolve, 2000));
 
-      // Look for Post button with comprehensive selector options
+      // Enhanced Post button discovery and clicking
       const postButtonSelectors = [
+        // Modern Facebook post buttons
         '[aria-label="Post"]',
         'div[aria-label="Post"]',
+        'button[aria-label="Post"]',
         '[data-testid="react-composer-post-button"]',
+        
+        // Alternative selectors
         'button[type="submit"]',
-        'button:has(> span:contains("Post"))',
-        'div[role="button"]:has(> span:contains("Post"))',
-        '[data-pagelet*="Composer"] button',
-        'button[data-sigil*="composer"]'
+        'div[role="button"]:has(span:contains("Post"))',
+        'button:has(span:contains("Post"))',
+        '[data-testid*="post"]',
+        
+        // Legacy selectors
+        'button[name="post"]',
+        'input[type="submit"][value*="Post"]',
+        '.uiButton[type="submit"]'
       ];
 
       let posted = false;
-      console.log('🔍 Looking for Post buttons...');
+      console.log('🔍 Enhanced Post button discovery...');
       
       for (const btnSelector of postButtonSelectors) {
         try {
-          console.log(`🧪 Trying button selector: ${btnSelector}`);
+          console.log(`🧪 Trying post button selector: ${btnSelector}`);
+          
+          // Wait for button to be available
           await this.page.waitForSelector(btnSelector, { visible: true, timeout: 5000 });
-          await this.page.click(btnSelector);
-          console.log('✅ Successfully found and clicked Post button!');
-          posted = true;
-          break;
+          
+          // Verify button is clickable
+          const isClickable = await this.page.evaluate(sel => {
+            const button = document.querySelector(sel);
+            if (!button) return false;
+            
+            const rect = button.getBoundingClientRect();
+            const style = getComputedStyle(button);
+            
+            return rect.width > 0 && 
+                   rect.height > 0 && 
+                   style.display !== 'none' && 
+                   style.visibility !== 'hidden' &&
+                   !button.disabled &&
+                   !button.hasAttribute('disabled');
+          }, btnSelector);
+          
+          if (!isClickable) {
+            console.log(`⚠️ Button found but not clickable: ${btnSelector}`);
+            continue;
+          }
+          
+          // Scroll button into view
+          await this.page.evaluate(sel => {
+            const button = document.querySelector(sel);
+            if (button) {
+              button.scrollIntoView({ behavior: "smooth", block: "center" });
+            }
+          }, btnSelector);
+          
+          await new Promise(resolve => setTimeout(resolve, 500));
+          
+          // Multiple click attempts
+          try {
+            await this.page.click(btnSelector, { delay: 100 });
+            console.log('✅ Successfully clicked Post button!');
+            posted = true;
+            break;
+          } catch (clickError) {
+            // Try JavaScript click as fallback
+            console.log('⚠️ Regular click failed, trying JavaScript click...');
+            await this.page.evaluate(sel => {
+              const button = document.querySelector(sel);
+              if (button) {
+                button.click();
+              }
+            }, btnSelector);
+            
+            console.log('✅ JavaScript click attempted');
+            posted = true;
+            break;
+          }
+          
         } catch (err) {
-          console.log(`⚠️ Post button not found with selector: ${btnSelector}`);
+          console.log(`❌ Post button selector failed: ${btnSelector} - ${err.message}`);
         }
       }
 
       if (!posted) {
-        console.log('❌ Could not confirm Post button - checking if any buttons visible');
+        console.log('❌ Could not find or click Post button - comprehensive debugging...');
         
-        // Debug: what buttons are actually available?
+        // Take screenshot for debugging
+        await this.page.screenshot({ path: './debug-no-post-button.png', fullPage: true });
+        
+        // Debug: Show all available buttons
         const availableButtons = await this.page.evaluate(() => {
-          return Array.from(document.querySelectorAll('button, [role="button"]'))
-            .filter(btn => btn.offsetWidth > 0 && btn.offsetHeight > 0)
-            .map(btn => ({
-              text: btn.textContent?.trim().substring(0, 30) || '',
-              ariaLabel: btn.getAttribute('aria-label') || '',
-              id: btn.id || '',
-              class: btn.className
-            }));
+          const buttons = [];
+          
+          // Get all button-like elements
+          const buttonElements = [
+            ...Array.from(document.querySelectorAll('button')),
+            ...Array.from(document.querySelectorAll('[role="button"]')),
+            ...Array.from(document.querySelectorAll('input[type="submit"]')),
+            ...Array.from(document.querySelectorAll('div[aria-label]'))
+          ];
+          
+          buttonElements.forEach(btn => {
+            if (btn.offsetWidth > 0 && btn.offsetHeight > 0) {
+              buttons.push({
+                tagName: btn.tagName,
+                text: btn.textContent?.trim().substring(0, 50) || '',
+                ariaLabel: btn.getAttribute('aria-label') || '',
+                id: btn.id || '',
+                className: btn.className?.substring(0, 100) || '',
+                testid: btn.getAttribute('data-testid') || '',
+                type: btn.type || '',
+                disabled: btn.disabled || btn.hasAttribute('disabled')
+              });
+            }
+          });
+          
+          return buttons;
         });
         
-        console.log('🕵️ Visible buttons on page:', availableButtons);
+        console.log('🕵️ All available buttons:', availableButtons);
         
-        // Try to find any "Post" related button
+        // Look for any button that might be the post button
         const postLikeButtons = availableButtons.filter(b =>
           b.text.toLowerCase().includes('post') ||
-          b.ariaLabel.toLowerCase().includes('post')
+          b.ariaLabel.toLowerCase().includes('post') ||
+          b.text.toLowerCase().includes('share') ||
+          b.ariaLabel.toLowerCase().includes('share')
         );
         
         if (postLikeButtons.length > 0) {
           console.log('⚠️ Found potential post buttons:', postLikeButtons);
+          
+          // Try clicking the most promising one
+          const bestCandidate = postLikeButtons[0];
+          if (bestCandidate.ariaLabel) {
+            try {
+              await this.page.click(`[aria-label="${bestCandidate.ariaLabel}"]`);
+              console.log('✅ Clicked best candidate post button');
+              posted = true;
+            } catch {}
+          }
         }
-        
+      }
+
+      if (!posted) {
+        console.log('❌ Final attempt: Could not post to Facebook');
         return false;
       }
 
-      // Give Facebook time to process post
-      console.log('⏳ Waiting for post to process...');
-      await new Promise(resolve => setTimeout(resolve, 4000));
+      // Enhanced post verification
+      console.log('⏳ Waiting for post to process and verifying...');
+      await new Promise(resolve => setTimeout(resolve, 5000));
       
+      // Check for success indicators
+      const postSuccess = await this.page.evaluate(() => {
+        // Look for success indicators
+        const successIndicators = [
+          'Your post is now live',
+          'Post shared',
+          'Posted',
+          'Shared to Facebook'
+        ];
+        
+        const bodyText = document.body.textContent;
+        return successIndicators.some(indicator => 
+          bodyText.includes(indicator)
+        );
+      });
+      
+      if (postSuccess) {
+        console.log('🎉 Post verification successful - Facebook confirmed post!');
+      } else {
+        console.log('⚠️ Post submitted but no explicit confirmation found');
+      }
 
-      console.log('🎉 Post creation process completed!');
+      console.log('🎉 Facebook post creation process completed!');
       return true;
 
     } catch (error) {
-      console.log('❌ Error during posting:', error.message);
+      console.log('❌ Critical error during Facebook posting:', error.message);
+      console.log('Stack trace:', error.stack);
+      
+      // Take error screenshot
+      if (this.page) {
+        await this.page.screenshot({ path: './debug-facebook-error.png', fullPage: true });
+      }
+      
       return false;
     }
   }
@@ -557,7 +831,7 @@ class FacebookDebugPro {
     try {
       await this.initialize();
       console.log('🚀 Starting Facebook PRO debugging session...');
-      console.log('📝 Focusing on debug route only ⚠️');
+      console.log(`📝 Caption to post: "${caption}"`);
       
       // Discover and test login elements
       const elements = await this.discoverLoginElements();
@@ -600,21 +874,36 @@ class FacebookDebugPro {
         
         
         if (await this.handleSecurityChallenge()) {
-          // AFTER SUCCESSFUL LOGIN & NO SECURITY CHALLENGE - CREATE A POST WITH RETRIES
-          const maxRetries = 3;
+          // AFTER SUCCESSFUL LOGIN & NO SECURITY CHALLENGE - CREATE A POST WITH ENHANCED RETRIES
+          const maxRetries = 5;
           let postSuccess = false;
           let retryCount = 0;
           
           while (!postSuccess && retryCount < maxRetries) {
             retryCount++;
             console.log(`\n🔄 Attempting post (${retryCount}/${maxRetries})...`);
+            
+            // Add delay between retries to let Facebook UI settle
+            if (retryCount > 1) {
+              console.log('⏳ Waiting between retries for UI to settle...');
+              await new Promise(resolve => setTimeout(resolve, 3000));
+            }
+            
             postSuccess = await this.postToFacebook(caption);
             
             if (!postSuccess) {
               console.log(`❌ Post attempt ${retryCount} failed`);
               if (retryCount < maxRetries) {
-                console.log('⏳ Waiting 5 seconds before retry...');
-                await new Promise(resolve => setTimeout(resolve, 5000));
+                console.log('⏳ Waiting before retry and refreshing page...');
+                
+                // Refresh the page to reset Facebook's state
+                try {
+                  await this.page.reload({ waitUntil: 'networkidle2', timeout: 30000 });
+                  await new Promise(resolve => setTimeout(resolve, 3000));
+                  console.log('🔄 Page refreshed for retry');
+                } catch (refreshError) {
+                  console.log('⚠️ Page refresh failed, continuing with retry...');
+                }
               }
             }
           }
@@ -624,38 +913,26 @@ class FacebookDebugPro {
             console.log('\n🎉 SUCCESSFUL SOCIAL AUTOMATION WORKFLOW:');
             console.log('1. ✅ Intelligent login bypassed Facebook security');
             console.log('2. ✅ Automated post creation completed');
-            console.log('3. ✅ Post content:', caption);
+            console.log(`3. ✅ Post content: "${caption}"`);
             console.log('4. ✅ Attempts:', retryCount);
             return { success: true, message: `Posted: "${caption}" after ${retryCount} attempt(s)` };
           } else {
             await this.logStep('Facebook Post Creation', false, `Failed after ${maxRetries} attempts - potential security block`);
             console.log(`\n❌ Login succeeded but post creation failed after ${maxRetries} attempts`);
+            console.log('💡 Possible causes:');
+            console.log('   - Facebook UI changes requiring selector updates');
+            console.log('   - Account restrictions or security blocks');
+            console.log('   - Network connectivity issues');
+            console.log('   - Rate limiting by Facebook');
             return { success: false, error: 'Post creation failed after retries' };
           }
         } else {
           console.log('\n🛑 Security challenge triggered - manual intervention required before posting');
           return { success: false, error: 'Security challenge detected' };
         }
-        
-        console.log('\n📋 Manual Testing Commands:');
-        console.log('Open Chrome DevTools (F12) and test:');
-        console.log('• document.querySelectorAll(\'input\')');
-        console.log('• document.querySelectorAll(\'button, [role="button"]\')');
-        console.log('• Check for security dialogs or 2FA prompts');
       } else {
         await this.logStep('PRO Login Automation', false, 'Login failed - check browser for manual intervention');
         return { success: false, error: 'Login failed' };
-      }
-      
-      console.log('\n💡 PRO TIPS:');
-      console.log('1. Watch the browser - Facebook may show security dialogs');
-      console.log('2. Use F12 DevTools to inspect current page structure');
-      console.log('3. Screenshots saved to:', SCREENSHOT_DIR);
-      
-      // Keep browser open for manual inspection
-      if (!HEADLESS) {
-        console.log('\n👀 Browser will stay open for 60 seconds for manual inspection...');
-        await new Promise(resolve => setTimeout(resolve, 60000));
       }
       
     } catch (error) {
@@ -671,6 +948,12 @@ class FacebookDebugPro {
       } else if (this.browser) {
         console.log('🔵 Browser kept open for manual inspection...');
         console.log('💡 Press Ctrl+C in terminal to close browser when done');
+        console.log('\n📋 Manual Testing Commands:');
+        console.log('Open Chrome DevTools (F12) and test:');
+        console.log('• document.querySelectorAll(\'div[contenteditable="true"]\')');
+        console.log('• document.querySelectorAll(\'[role="textbox"]\')');
+        console.log('• document.querySelectorAll(\'[aria-label*="Post"]\')');
+        console.log('• Check for security dialogs or 2FA prompts');
         
         // Keep process alive for manual interaction
         await new Promise(() => {});

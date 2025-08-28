@@ -33,20 +33,25 @@ function App() {
     };
 
     setPostStatus('posting');
-    setStatusMessage(`Starting automation for ${selectedPlatforms.length} platform(s)...`);
+    setStatusMessage(`Starting Facebook automation with caption: "${postData.caption.substring(0, 50)}${postData.caption.length > 50 ? '...' : ''}"`);
 
     // Determine environment variables based on headless mode
     const envVars = {
       HEADLESS: headlessMode ? 'true' : 'false',
-      KEEP_BROWSER_OPEN: headlessMode ? 'false' : 'true'
+      KEEP_BROWSER_OPEN: headlessMode ? 'false' : 'true',
+      headless: headlessMode,
+      keepBrowserOpen: !headlessMode
     };
 
     let successCount = 0;
     let failCount = 0;
+    let detailedResults: string[] = [];
 
     // Execute automation for each selected platform
     for (const platformId of selectedPlatforms) {
       try {
+        setStatusMessage(`Posting to ${platformId}... Please wait.`);
+        
         let endpoint = '';
         switch (platformId) {
           case 'facebook':
@@ -61,6 +66,7 @@ function App() {
           // Add cases for other platforms as endpoints are implemented
           default:
             console.warn(`No endpoint configured for platform: ${platformId}`);
+            detailedResults.push(`❌ ${platformId}: No endpoint configured`);
             continue;
         }
 
@@ -79,12 +85,21 @@ function App() {
 
         if (response.ok && result.success) {
           successCount++;
+          detailedResults.push(`✅ ${platformId}: ${result.message || 'Posted successfully'}`);
+          console.log(`✅ Successfully posted to ${platformId}:`, result);
         } else {
           failCount++;
+          detailedResults.push(`❌ ${platformId}: ${result.error || 'Unknown error'}`);
           console.error(`Failed to post to ${platformId}:`, result.error);
+          
+          // Log troubleshooting info if available
+          if (result.troubleshooting) {
+            console.log(`💡 Troubleshooting for ${platformId}:`, result.troubleshooting);
+          }
         }
       } catch (error) {
         failCount++;
+        detailedResults.push(`❌ ${platformId}: Network error - ${error instanceof Error ? error.message : 'Unknown error'}`);
         console.error(`Error posting to ${platformId}:`, error);
       }
     }
@@ -93,31 +108,31 @@ function App() {
     if (successCount > 0 && failCount === 0) {
       const publishedPost = { ...newPost, status: 'published' as const };
       setPostStatus('success');
-      setStatusMessage(`Successfully published to ${successCount} platform(s)!`);
+      setStatusMessage(`🎉 Successfully published to ${successCount} platform(s)! ${detailedResults.join(' | ')}`);
       setPosts([publishedPost, ...posts]);
       // Save to localStorage
       await LocalStorageService.savePost(newPost, selectedPlatforms);
     } else if (successCount > 0) {
       const publishedPost = { ...newPost, status: 'published' as const };
       setPostStatus('success');
-      setStatusMessage(`Published to ${successCount} platform(s), failed on ${failCount}.`);
+      setStatusMessage(`⚠️ Partial success: ${successCount} succeeded, ${failCount} failed. ${detailedResults.join(' | ')}`);
       setPosts([publishedPost, ...posts]);
       // Save to localStorage
       await LocalStorageService.savePost(newPost, selectedPlatforms);
     } else {
       const failedPost = { ...newPost, status: 'failed' as const };
       setPostStatus('failed');
-      setStatusMessage('Failed to publish to any platforms.');
+      setStatusMessage(`❌ Failed to publish to any platforms. ${detailedResults.join(' | ')}`);
       setPosts([failedPost, ...posts]);
       // Save failed attempt to localStorage
       await LocalStorageService.savePost(newPost, selectedPlatforms);
     }
 
-    // Reset status after 5 seconds
+    // Reset status after 10 seconds (longer to read detailed results)
     setTimeout(() => {
       setPostStatus('idle');
       setStatusMessage('');
-    }, 5000);
+    }, 10000);
   };
 
   const getStatusIcon = () => {
@@ -135,7 +150,7 @@ function App() {
 
   const handleLaunchChromium = async () => {
     setDebugStatus('launching');
-    setDebugMessage('Launching Chromium debug session...');
+    setDebugMessage('Launching Facebook automation with visible browser...');
 
     try {
       const response = await fetch('http://localhost:3002/api/automation/run-facebook-debug', {
@@ -144,7 +159,9 @@ function App() {
           'Content-Type': 'application/json',
         },
         body: JSON.stringify({
-          caption: 'Debug test post'
+          caption: 'Debug test post from automation dashboard',
+          headless: false,
+          keepBrowserOpen: true
         }),
       });
 
@@ -152,21 +169,26 @@ function App() {
 
       if (response.ok && result.success) {
         setDebugStatus('success');
-        setDebugMessage('Chromium launched successfully! Check the browser window.');
+        setDebugMessage(`✅ Facebook automation completed! ${result.posted ? 'Post was created successfully.' : 'Check browser window for results.'}`);
       } else {
         setDebugStatus('failed');
-        setDebugMessage(result.error || 'Failed to launch Chromium');
+        setDebugMessage(`❌ ${result.error || 'Facebook automation failed'} - Check console for details.`);
+        
+        // Log troubleshooting info
+        if (result.troubleshooting) {
+          console.log('💡 Troubleshooting suggestions:', result.troubleshooting);
+        }
       }
     } catch {
       setDebugStatus('failed');
-      setDebugMessage('Network error occurred');
+      setDebugMessage('❌ Network error - Make sure automation server is running on port 3002');
     }
 
-    // Reset status after 5 seconds
+    // Reset status after 8 seconds
     setTimeout(() => {
       setDebugStatus('idle');
       setDebugMessage('');
-    }, 5000);
+    }, 8000);
   };
 
   const getDebugStatusIcon = () => {
