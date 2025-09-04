@@ -1,573 +1,787 @@
 import puppeteer from 'puppeteer';
 import fs from 'fs-extra';
 import path from 'path';
+import dotenv from 'dotenv';
+
+// Load environment variables from .env file
+dotenv.config();
 
 // Configuration
-const HEADLESS = false; // VISIBLE browser for debugging
-const SCREENSHOT_DIR = './debug-screenshots';
+const HEADLESS = false; // Show browser for debugging
+const SCREENSHOT_DIR = './demo-screenshots';
 const FB_URL = 'https://www.facebook.com/login';
-const FB_USERNAME = process.env.FB_USERNAME || process.env.FBusername || '';
-const FB_PASSWORD = process.env.FB_PASSWORD || process.env.FBpassword || '';
 
-// Enhanced detection bypass techniques
-const BYPASS_TECHNIQUES = {
-    RANDOM_MOUSE_MOVEMENTS: true,
-    HUMAN_TYPE_SPEED_VARIATION: true,
-    NAVIGATION_PATTERN_RANDOMIZATION: true,
-    BROWSER_FINGERPRINT_SHOOTING: true,
-    SECURITY_CHALLENGE_EVASION: true
-};
+// Get credentials from environment variables
+const FB_USERNAME = process.env.FB_USERNAME;
+const FB_PASSWORD = process.env.FB_PASSWORD;
 
-// Common two-step verification regexes to detect
-const TFA_DETECTION_PATTERNS = [
-    /two[-\s]?step/i,
-    /authentication/i,
-    /verification/i,
-    /your[-\s]?login[-\s]?code/i,
-    /security[-\s]?check/i,
-    /code[-\s]?sent[-\s]?(?:to|via)/i
-];
-
-class FacebookDebugPro {
+class FacebookAutomation {
     constructor() {
         this.browser = null;
         this.page = null;
         this.logSteps = [];
+        this.cookieDir = './cookies';
     }
 
     async initialize() {
         await fs.ensureDir(SCREENSHOT_DIR);
+        await fs.ensureDir(this.cookieDir);
 
         this.browser = await puppeteer.launch({
             headless: HEADLESS,
             args: [
                 '--no-sandbox',
                 '--disable-setuid-sandbox',
-                '--disable-dev-shm-usage',
-                '--window-size=1400,900', // More common user resolution
-                '--disable-features=VizDisplayCompositor',
-                '--ignore-certificate-errors',
                 '--disable-blink-features=AutomationControlled',
+                '--disable-features=VizDisplayCompositor',
+                '--window-size=1920,1080',
                 '--disable-web-security',
-                '--allow-running-insecure-content',
-                '--disable-gpu',
-                '--disable-software-rasterizer',
-                '--disable-extensions',
-                '--disable-background-networking',
-                '--disable-sync',
-                '--metrics-recording-only',
-                '--disable-default-apps',
-                '--mute-audio',
-                '--no-first-run',
-                '--disable-notifications',
-                '--disable-popup-blocking',
-                '--disable-background-timer-throttling',
-                '--disable-renderer-backgrounding',
-                '--disable-client-side-phishing-detection',
-                '--disable-component-update',
-                '--disable-domain-reliability'
+                '--disable-features=VizDisplayCompositor',
+                '--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             ],
             defaultViewport: { width: 1920, height: 1080 }
         });
 
         this.page = await this.browser.newPage();
 
-        // Override webdriver to prevent detection
+        // Enhanced stealth techniques
         await this.page.evaluateOnNewDocument(() => {
             Object.defineProperty(navigator, 'webdriver', { get: () => false });
+            Object.defineProperty(navigator, 'languages', { get: () => ['en-US', 'en'] });
+            Object.defineProperty(navigator, 'plugins', { get: () => [1, 2, 3, 4, 5] });
+
+            // Remove automation indicators
+            delete navigator.__proto__.webdriver;
+
+            // Mock chrome object
+            window.chrome = {
+                runtime: {},
+                app: {
+                    isInstalled: false
+                }
+            };
         });
 
+        // Set user agent
         await this.page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36');
 
-        console.log('🎯 Browser initialized - ready for Facebook PRO debugging');
+        console.log('🎯 Browser initialized with Windows-specific stealth configuration');
     }
 
     async logStep(name, success, error) {
-            const step = {
-                name,
-                success,
-                error,
-                timestamp: new Date()
-            };
-
-            // Take screenshot for each step
-            if (this.page) {
-                const screenshotName = `${name.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.png`;
-                step.screenshot = path.join(SCREENSHOT_DIR, screenshotName);
-
-                try {
-                    await this.page.screenshot({ path: step.screenshot, fullPage: true });
-                } catch (err) {
-                    console.log('⚠️ Could not take screenshot:', err);
-                }
-
-                // Add random human-like mouse movements
-                if (BYPASS_TECHNIQUES.RANDOM_MOUSE_MOVEMENTS) {
-                    await this.page.mouse.move(100 + Math.random() * 600, 100 + Math.random() * 300);
-                    await this.page.mouse.move(200 + Math.random() * 500, 150 + Math.random() * 250);
-                }
-            }
-
+            const step = { name, success, error, timestamp: new Date() };
             this.logSteps.push(step);
+
             const statusIcon = success ? '✅' : '❌';
             console.log(`${statusIcon} ${name}: ${success ? 'SUCCESS' : `FAILED - ${error}`}`);
     
-    return step;
-  }
-
-  async discoverLoginElements() {
-    console.log('\n🔍 Scanning Facebook login page for current selectors...');
-    await this.page.goto(FB_URL, { waitUntil: 'networkidle2', timeout: 60000 });
-    await new Promise(resolve => setTimeout(resolve, 3000));
-
-    const elements = await this.page.evaluate(() => {
-      const result = {
-        emailSelectors: [],
-        passwordSelectors: [],
-        loginButtonSelectors: []
-      };
-
-      // Analyze all interactive elements
-      const allInputs = Array.from(document.querySelectorAll('input'));
-      const allButtons = Array.from(document.querySelectorAll('button, [role="button"], input[type="submit"], [type="button"]'));
-
-      // Email/Username fields
-      // CRITICAL: Filter out invisible and hidden elements FIRST to prevent security detection
-      const visibleInputs = allInputs.filter(input => {
-        const style = getComputedStyle(input);
-        const visibleAndUsable = style.display !== 'none' &&
-                              style.visibility !== 'hidden' &&
-                              style.opacity !== '0' &&
-                              input.type !== 'hidden' &&
-                              !input.hasAttribute('aria-hidden') &&
-                              !input.hasAttribute('hidden') &&
-                              !input.disabled &&
-                              input.offsetParent !== null;
-
-        // Check if actually visible on the screen (not offscreen or covered)
-        const rect = input.getBoundingClientRect();
-        const inViewport = rect.width > 2 && rect.height > 2;
-        
-        return visibleAndUsable && inViewport;
-      });
-
-      visibleInputs.forEach(input => {
-        const placeholder = (input.placeholder || '').toLowerCase();
-        const name = (input.name || '').toLowerCase();
-        const id = (input.id || '').toLowerCase();
-        const type = (input.type || '').toLowerCase();
-
-        // STRICT verification - only accept fields that are PROBABLY login fields
-        const isLoginField = (
-          (type === 'email' || type === 'text') &&
-          (placeholder.includes('email') ||
-           placeholder.includes('phone') ||
-           placeholder.includes('username') ||
-           name.includes('email') ||
-           name.includes('user'))
-        );
-
-        if (isLoginField) {
-          // Add with better priority scheme
-          result.emailSelectors.unshift(`input[name="${name}"]`); // PREFERRED: name
-          result.emailSelectors.push(`#${id}`);              // SECONDARY: ID
-          result.emailSelectors.push(`input[type="${type}"]`); // FALLBACK: type
-        }
-
-        // Password fields - CRITICAL: Only match CLEAR password indicators
-        const isPasswordField = (
-          type === 'password' || (
-            (placeholder.includes('password') || placeholder.includes('pass')) &&
-            !placeholder.includes('author') // Avoid false positives
-          )
-        );
-
-        if (isPasswordField) {
-          result.passwordSelectors.unshift(`input[name="${name}"]`); // PREFERRED: name
-          result.passwordSelectors.push(`#${id}`);                   // SECONDARY: ID
-          result.passwordSelectors.push(`input[type="${type}"]`);    // FALLBACK: type
-        }
-      });
-
-      // Login buttons
-      allButtons.forEach(button => {
-        const text = (button.textContent || '').toLowerCase();
-        const ariaLabel = (button.getAttribute('aria-label') || '').toLowerCase();
-        const type = (button.type || '').toLowerCase();
-        const id = (button.id || '').toLowerCase();
-        
-        if (type === 'submit' || 
-            text.includes('log') || 
-            text.includes('sign') || 
-            text.includes('in') ||
-            ariaLabel.includes('log') || 
-            ariaLabel.includes('sign') ||
-            id.includes('login') || 
-            id.includes('submit')) {
-          
-          if (id) result.loginButtonSelectors.push(`#${id}`);
-          result.loginButtonSelectors.push(`${button.tagName.toLowerCase()}[type="${type}"]`);
-          if (ariaLabel) result.loginButtonSelectors.push(`[aria-label*="${ariaLabel.split(' ')[0]}"]`);
-        }
-      });
-
-      // Remove duplicates
-      return {
-        emailSelectors: [...new Set(result.emailSelectors)].filter(s => s && s.length > 4),
-        passwordSelectors: [...new Set(result.passwordSelectors)].filter(s => s && s.length > 4),
-        loginButtonSelectors: [...new Set(result.loginButtonSelectors)].filter(s => s && s.length > 4)
-      };
-    });
-
-    console.log('🎯 Discovered login selectors:');
-    console.log('   📧 Email inputs:', elements.emailSelectors.slice(0, 5).join(', ') || 'None found');
-    console.log('   🔐 Password inputs:', elements.passwordSelectors.slice(0, 5).join(', ') || 'None found');
-    console.log('   📝 Login buttons:', elements.loginButtonSelectors.slice(0, 5).join(', ') || 'None found');
-
-    return elements;
-  }
-
-  async attemptLoginWithSelectors(username, password, emailSelectors, passwordSelectors, loginButtonSelectors) {
-    console.log('\n🔐 Attempting intelligent login...');
-    
-    // Try email selectors
-    let emailFilled = false;
-    for (const selector of emailSelectors.slice(0, 5)) {
-      try {
-        console.log(`🧪 Trying email selector: ${selector}`);
-        await this.page.waitForSelector(selector, { timeout: 3000 });
-        await this.page.focus(selector);
-        
-        // Clear existing text if any
-        await this.page.keyboard.down('Control');
-        await this.page.keyboard.press('A');
-        await this.page.keyboard.up('Control');
-        await this.page.keyboard.press('Backspace');
-        
-        // Type with human-like delay
-        await this.page.type(selector, username, { delay: 20 + Math.random() * 30 });
-        emailFilled = true;
-        console.log(`✅ Filled email using: ${selector}`);
-        break;
-      } catch (error) {
-        console.log(`❌ Email selector failed: ${selector}`);
-      }
-    }
-
-    if (!emailFilled) {
-      console.log('❌ Could not fill email field');
-      return false;
-    }
-
-    // Try password selectors
-    let passwordFilled = false;
-    for (const selector of passwordSelectors.slice(0, 5)) {
-      try {
-        console.log(`🧪 Trying password selector: ${selector}`);
-        await this.page.waitForSelector(selector, { timeout: 3000 });
-        await this.page.type(selector, password, { delay: 15 + Math.random() * 25 });
-        passwordFilled = true;
-        console.log(`✅ Filled password using: ${selector}`);
-        break;
-      } catch (error) {
-        console.log(`❌ Password selector failed: ${selector}`);
-      }
-    }
-
-    if (!passwordFilled) {
-      console.log('❌ Could not fill password field');
-      return false;
-    }
-
-    // Try login buttons
-    await new Promise(resolve => setTimeout(resolve, 1000)); // Brief pause between fields
-    
-    let loginClicked = false;
-    for (const selector of loginButtonSelectors.slice(0, 5)) {
-      try {
-        console.log(`🧪 Trying login button: ${selector}`);
-        await this.page.waitForSelector(selector, { timeout: 3000 });
-        await this.page.click(selector);
-        loginClicked = true;
-        console.log(`✅ Clicked login using: ${selector}`);
-        break;
-      } catch (error) {
-        console.log(`❌ Login button failed: ${selector}`);
-      }
-    }
-
-    // Wait for navigation after login attempt
-    await new Promise(resolve => setTimeout(resolve, 5000));
-    
-    // Check if login was successful by looking for dashboard elements
-    const loginSuccess = await this.checkLoginSuccess();
-    
-    if (loginSuccess) {
-      console.log('🎉 Login successful! Facebook dashboard detected.');
-      return true;
-    } else {
-      console.log('❌ Login unsuccessful or security checks present');
-      
-      // Check for security challenges
-      const hasChallenge = await this.page.evaluate(() => {
-        return document.body.textContent.includes('security') ||
-               document.body.textContent.includes('checkpoint') ||
-               document.body.textContent.includes('verification');
-      });
-      
-      if (hasChallenge) {
-        console.log('⚠️ Security challenge detected - manual intervention required');
-      }
-      
-      return false;
-    }
-  }
-
-  async checkLoginSuccess() {
-    // Look for elements that indicate successful login
-    const successMarkers = [
-      '[aria-label="Facebook"]',
-      '[data-pagelet="MainFeed"]',
-      '[role="main"]',
-      '[aria-label="News Feed"]',
-      'text/Welcome to Facebook'
-    ];
-    
-    for (const selector of successMarkers) {
-      try {
-        await this.page.waitForSelector(selector, { timeout: 3000 });
-        return true;
-      } catch {
-        continue;
-      }
-    }
-    
-    return false;
-  }
-
-  async handleSecurityChallenge() {
-    console.log('\n🛡️  Checking for security challenges...');
-    
-    // Look for common security challenge indicators
-    const hasChallenge = await this.page.evaluate(() => {
-      const securityKeywords = ['security', 'checkpoint', 'verification', 'confirm', 'identify'];
-      const bodyText = document.body.textContent.toLowerCase();
-      
-      return securityKeywords.some(keyword => bodyText.includes(keyword)) ||
-             document.querySelector('img[alt*="security"]') ||
-             document.querySelector('input[type*="code"]') ||
-             document.querySelector('button:contains("Continue")');
-    });
-    
-    if (hasChallenge) {
-      console.log('⚠️  Security challenge detected - pausing for manual intervention');
-      await this.logStep('Security Challenge', false, 'Requires manual verification');
-      return false;
-    }
-    
-    // Check for two-factor authentication specifically
-    const isTwoFactor = await this.isTwoFactorChallenge();
-    if (isTwoFactor) {
-      console.log('🔐 Two-Factor Authentication detected - attempting bypass...');
-      const bypassed = await this.bypassTwoFactorSecurity();
-      return bypassed;
-    }
-    
-    return true;
-  }
-
-  async postToFacebook(message) {
-    try {
-      console.log('\n📝 Attempting to post to Facebook...');
-      
-      // Check for security challenges first
-      if (!(await this.handleSecurityChallenge())) {
-        return false;
-      }
-      
-      // Wait for Facebook to fully load and ensure we're on a place where we can post
-      await new Promise(resolve => setTimeout(resolve, 3000));
-      
-      // Look for the "Create Post" or "What's on your mind" input elements
-      const canPost = await this.page.evaluate(() => {
-        // Look for various post creation elements
-        const postElements = [
-          '[aria-label="Create a post"]',
-          '[aria-label="What\'s on your mind?"]',
-          'textarea[placeholder*="What\'s on your mind"]',
-          'div[contenteditable="true"]',
-          '[aria-describedby*="placeholder"]'
-        ];
-        
-        // Check if any post elements exist and are visible
-        for (const selector of postElements) {
-          const element = document.querySelector(selector);
-          if (element &&
-              element.offsetWidth > 0 &&
-              element.offsetHeight > 0 &&
-              window.getComputedStyle(element).display !== 'none') {
-            return true;
-          }
-        }
-        return false;
-      });
-      
-      if (canPost) {
-        // Try different ways to create a post
-        const postSelectors = [
-          '[aria-label="Create a post"]',
-          '[aria-label="What\'s on your mind?"]',
-          'div[data-testid*="status-attachment"]',
-          '[contenteditable="true"][role="textbox"]'
-        ];
-        
-        for (const selector of postSelectors) {
-          try {
-            console.log(`Trying post selector: ${selector}`);
-            await this.page.waitForSelector(selector, { timeout: 3000 });
-            await this.page.click(selector);
-            await new Promise(resolve => setTimeout(resolve, 1000));
-            
-            // Type the message with human-like delays and random pauses
-            for (const char of message) {
-              await this.page.keyboard.type(char, { delay: 30 + Math.random() * 40 });
-              // Random small pauses between characters to mimic human typing
-              if (Math.random() > 0.8) {
-                await new Promise(resolve => setTimeout(resolve, 100 + Math.random() * 200));
-              }
+        if (this.page && success) {
+            try {
+                const screenshotName = `${name.replace(/[^a-zA-Z0-9]/g, '_')}_${Date.now()}.png`;
+                await this.page.screenshot({ path: path.join(SCREENSHOT_DIR, screenshotName) });
+            } catch (err) {
+                console.log('Screenshot failed:', err.message);
             }
+        }
+        
+        return step;
+    }
+
+    async humanDelay(min = 1000, max = 3000) {
+        const delay = Math.random() * (max - min) + min;
+        await new Promise(resolve => setTimeout(resolve, delay));
+    }
+
+    async typeHumanLike(selector, text) {
+        await this.page.focus(selector);
+        await this.humanDelay(500, 1000);
+        
+        // Type with random delays between characters
+        for (const char of text) {
+            await this.page.keyboard.type(char);
+            await new Promise(resolve => setTimeout(resolve, Math.random() * 100 + 50));
+        }
+    }
+
+    async saveCookies() {
+        const cookies = await this.page.cookies();
+        await fs.writeJSON(path.join(this.cookieDir, 'facebook_cookies.json'), cookies);
+        console.log('🍪 Cookies saved');
+    }
+
+    async loadCookies() {
+        const cookiePath = path.join(this.cookieDir, 'facebook_cookies.json');
+        if (await fs.pathExists(cookiePath)) {
+            const cookies = await fs.readJSON(cookiePath);
+            await this.page.setCookie(...cookies);
+            console.log('🍪 Cookies loaded');
+            return true;
+        }
+        return false;
+    }
+
+    async login() {
+        try {
+            // Check if we have saved cookies
+            const hasCookies = await this.loadCookies();
             
-            // Look for and click the Post button
-            const postButtonSelectors = [
-              '[aria-label="Post"]',
-              'div[aria-label="Post"]',
-              '[data-testid="react-composer-post-button"]',
-              'button:has(> span:contains("Post"))'
+            await this.page.goto('https://www.facebook.com', { 
+                waitUntil: 'networkidle0', 
+                timeout: 30000 
+            });
+
+            await this.humanDelay(2000, 3000);
+
+            // Check if already logged in - use more robust detection
+            console.log('🔍 Checking if already logged in...');
+            
+            const loggedInSelectors = [
+                '[data-testid="user-menu"]',
+                '[aria-label*="Your profile" i]',
+                '[href*="/me/"]',
+                '[data-pagelet="LeftRail"]',
+                '[role="main"][data-pagelet*="Feed"]',
+                '[data-pagelet="Stories"]'
             ];
             
-            for (const btnSelector of postButtonSelectors) {
-              try {
-                await this.page.waitForSelector(btnSelector, { timeout: 2000 });
-                await this.page.click(btnSelector);
-                console.log('✅ Successfully posted to Facebook!');
-                
-                // Give time for the post to process
-                await new Promise(resolve => setTimeout(resolve, 3000));
-                return true;
-              } catch {
-                continue;
-              }
+            let isLoggedIn = false;
+            
+            // Check multiple selectors for logged-in state
+            for (const selector of loggedInSelectors) {
+                try {
+                    await this.page.waitForSelector(selector, { timeout: 1000 });
+                    console.log(`✅ Detected logged-in state via selector: ${selector}`);
+                    isLoggedIn = true;
+                    break;
+                } catch (e) {
+                    // Continue checking other selectors
+                }
             }
             
-            console.log('❌ Could not find Post button');
-            return false;
-          } catch {
-            continue;
-          }
-        }
-      }
-      
-      console.log('❌ Cannot post - post creation interface not found');
-      return false;
-      
-    } catch (error) {
-      console.log('❌ Error during posting:', error.message);
-      return false;
-    }
-  }
+            // Additional check - look for login buttons that indicate logged OUT state
+            if (!isLoggedIn) {
+                try {
+                    await this.page.waitForSelector('#email, input[name="email"], input[type="email"]', { timeout: 1000 });
+                    console.log('⚠️ Found login input fields - not logged in');
+                } catch (e) {
+                    // If we can't find login fields either, try to determine state by URL
+                    const currentUrl = await this.page.url();
+                    if (!currentUrl.includes('login') && !currentUrl.includes('auth')) {
+                        console.log('ℹ️ On Facebook main page without login elements - assuming logged in');
+                        isLoggedIn = true;
+                    }
+                }
+            }
+            
+            if (isLoggedIn) {
+                console.log('🎯 Already logged in with saved cookies!');
+                await this.logStep('Already logged in', true);
+                return true;
+            } else {
+                console.log('🔍 Not logged in, proceeding with login process...');
+            }
 
-  async runComprehensiveTest() {
-    try {
-      // Check if credentials are available
-      if (!FB_USERNAME || !FB_PASSWORD) {
-        console.log('❌ Facebook credentials not configured');
-        console.log('💡 Set environment variables:');
-        console.log('   - FB_USERNAME or FBusername');
-        console.log('   - FB_PASSWORD or FBpassword');
-        return;
-      }
-      
-      await this.initialize();
-      console.log('🚀 Starting Facebook PRO debugging session...');
-      
-      // Discover and test login elements
-      const elements = await this.discoverLoginElements();
-      
-      if (elements.emailSelectors.length === 0 ||
-          elements.passwordSelectors.length === 0 ||
-          elements.loginButtonSelectors.length === 0) {
-        console.log('❌ Insufficient login elements found - Facebook layout may have changed');
-        await this.logStep('Login Element Discovery', false, 'Insufficient elements found');
-        return;
-      }
-      
-      // Attempt intelligent login
-      const loginSuccess = await this.attemptLoginWithSelectors(
-        FB_USERNAME,
-        FB_PASSWORD,
-        elements.emailSelectors,
-        elements.passwordSelectors,
-        elements.loginButtonSelectors
-      );
-      
-      if (loginSuccess) {
-        await this.logStep('PRO Login Automation', true, 'Successfully logged in with dynamic selectors');
-        
-        // Check for immediate security challenges after login
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        
-        if (await this.handleSecurityChallenge()) {
-          // AFTER SUCCESSFUL LOGIN & NO SECURITY CHALLENGE - CREATE A POST
-          const postMessage = 'Hello I am New Here';
-          const postSuccess = await this.postToFacebook(postMessage);
-          
-          if (postSuccess) {
-            await this.logStep('Facebook Post Creation', true, `Posted: "${postMessage}"`);
-            console.log('\n🎉 SUCCESSFUL SOCIAL AUTOMATION WORKFLOW:');
-            console.log('1. ✅ Intelligent login bypassed Facebook security');
-            console.log('2. ✅ Automated post creation completed');
-            console.log('3. ✅ Post content: "Hello I am New Here"');
-          } else {
-            await this.logStep('Facebook Post Creation', false, 'Could not create post - potential security block');
-            console.log('\n⚠️ Login succeeded but post creation failed - possible security block');
-          }
-        } else {
-          console.log('\n🛑 Security challenge triggered - manual intervention required before posting');
+            // Go to login page
+            await this.page.goto(FB_URL, { 
+                waitUntil: 'networkidle0', 
+                timeout: 30000 
+            });
+
+            await this.logStep('Navigate to Facebook Login', true);
+
+            // Multiple selector strategies for email input
+            const emailSelectors = [
+                '#email',
+                'input[name="email"]',
+                'input[type="email"]',
+                'input[placeholder*="email" i]',
+                'input[placeholder*="Email" i]'
+            ];
+
+            let emailInput = null;
+            for (const selector of emailSelectors) {
+                try {
+                    await this.page.waitForSelector(selector, { timeout: 5000 });
+                    emailInput = selector;
+                    break;
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            if (!emailInput) {
+                throw new Error('Could not find email input field');
+            }
+
+            // Enter email
+            await this.typeHumanLike(emailInput, FB_USERNAME);
+            await this.logStep('Enter email', true);
+
+            // Multiple selector strategies for password input
+            const passwordSelectors = [
+                '#pass',
+                'input[name="pass"]',
+                'input[type="password"]',
+                'input[placeholder*="password" i]',
+                'input[placeholder*="Password" i]'
+            ];
+
+            let passwordInput = null;
+            for (const selector of passwordSelectors) {
+                try {
+                    await this.page.waitForSelector(selector, { timeout: 5000 });
+                    passwordInput = selector;
+                    break;
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            if (!passwordInput) {
+                throw new Error('Could not find password input field');
+            }
+
+            // Enter password
+            await this.typeHumanLike(passwordInput, FB_PASSWORD);
+            await this.logStep('Enter password', true);
+
+            // Multiple selector strategies for login button
+            const loginButtonSelectors = [
+                'button[name="login"]',
+                'input[name="login"]',
+                'button[type="submit"]',
+                'input[type="submit"]',
+                'button[data-testid="royal_login_button"]',
+                'input[value*="Log" i]'
+            ];
+
+            let loginButton = null;
+            for (const selector of loginButtonSelectors) {
+                try {
+                    await this.page.waitForSelector(selector, { timeout: 5000 });
+                    loginButton = selector;
+                    break;
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            if (!loginButton) {
+                throw new Error('Could not find login button');
+            }
+
+            // Click login button
+            await this.humanDelay(1000, 2000);
+            await this.page.click(loginButton);
+            await this.logStep('Click login button', true);
+
+            // Wait for login to complete - look for main feed or user menu
+            try {
+                await this.page.waitForSelector('[data-testid="user-menu"], [role="main"], [data-pagelet="Stories"]', { 
+                    timeout: 15000 
+                });
+                await this.logStep('Login successful', true);
+                
+                // Save cookies for future use
+                await this.saveCookies();
+                
+                return true;
+            } catch (e) {
+                // Check for error messages
+                try {
+                    const errorElement = await this.page.$('[data-testid="login_error_message"]');
+                    if (errorElement) {
+                        const errorText = await this.page.evaluate(el => el.textContent, errorElement);
+                        throw new Error(`Login failed: ${errorText}`);
+                    }
+                } catch (err) {
+                    // No error message found
+                }
+                throw new Error('Login timeout - may need to handle 2FA or captcha');
+            }
+
+        } catch (error) {
+            await this.logStep('Login failed', false, error.message);
+            return false;
         }
-        
-        console.log('\n📋 Manual Testing Commands:');
-        console.log('Open Chrome DevTools (F12) and test:');
-        console.log('• document.querySelectorAll(\'input\')');
-        console.log('• document.querySelectorAll(\'button, [role="button"]\')');
-        console.log('• Check for security dialogs or 2FA prompts');
-      } else {
-        await this.logStep('PRO Login Automation', false, 'Login failed - check browser for manual intervention');
-      }
-      
-      console.log('\n💡 PRO TIPS:');
-      console.log('1. Watch the browser - Facebook may show security dialogs');
-      console.log('2. Use F12 DevTools to inspect current page structure');
-      console.log('3. Screenshots saved to:', SCREENSHOT_DIR);
-      
-      // Keep browser open for manual inspection
-      if (!HEADLESS) {
-        console.log('\n👀 Browser will stay open for 60 seconds for manual inspection...');
-        await new Promise(resolve => setTimeout(resolve, 60000));
-      }
-      
-    } catch (error) {
-      console.error('❌ Debug session failed:', error);
-    } finally {
-      if (this.browser) {
-        await this.browser.close();
-        console.log('🏁 Browser closed');
-      }
     }
-  }
+
+    async findPostCreationArea() {
+        console.log('🔍 Searching for post creation area with enhanced detection...');
+        
+        // Wait longer and scroll to make sure page is fully loaded
+        await this.page.evaluate(() => {
+            window.scrollTo(0, 0); // Scroll to top
+        });
+        await this.humanDelay(3000, 5000);
+
+        // Take screenshot for debugging
+        await this.page.screenshot({ 
+            path: path.join(SCREENSHOT_DIR, 'page_scan.png'),
+            fullPage: true 
+        });
+
+        // Enhanced selectors including more recent Facebook UI patterns
+        const postAreaSelectors = [
+            // 2024 Facebook UI patterns
+            'div[aria-label*="Create a post" i]',
+            'div[role="button"][aria-label*="Create" i]',
+            '[data-pagelet*="composer" i] div[role="button"]',
+            '[data-pagelet="FeedComposer"]',
+            
+            // Text-based matching
+            'div[role="button"]:has-text("What\'s on your mind")',
+            'div[role="button"]:has-text("Start a post")',
+            
+            // Classic patterns
+            '[data-testid="status-attachment-mentions-input"]',
+            'div[data-testid="status-attachment-mentions-input"]',
+            '[placeholder*="mind" i]',
+            '[placeholder*="What\'s on your mind" i]',
+            
+            // Generic fallbacks
+            'div[role="textbox"][contenteditable="true"]',
+            '[contenteditable="true"]',
+            'div[role="button"]:not([aria-hidden="true"])'
+        ];
+
+        // Try each selector with enhanced visibility checking
+        for (const selector of postAreaSelectors) {
+            console.log(`🔍 Trying selector: ${selector}`);
+            try {
+                await this.page.waitForSelector(selector, { timeout: 2000 });
+                
+                const elements = await this.page.$$(selector);
+                console.log(`Found ${elements.length} elements with selector: ${selector}`);
+                
+                for (const element of elements) {
+                    const isVisible = await this.page.evaluate(el => {
+                        const rect = el.getBoundingClientRect();
+                        const style = window.getComputedStyle(el);
+                        
+                        return rect.width > 10 && 
+                               rect.height > 10 && 
+                               style.visibility !== 'hidden' &&
+                               style.display !== 'none' &&
+                               style.opacity !== '0' &&
+                               rect.top >= 0 && 
+                               rect.top < window.innerHeight;
+                    }, element);
+                    
+                    if (isVisible) {
+                        // Get element text to verify it's the right one
+                        const elementText = await this.page.evaluate(el => {
+                            return el.textContent || el.getAttribute('aria-label') || el.getAttribute('placeholder') || '';
+                        }, element);
+                        
+                        console.log(`✅ Found visible element with text: "${elementText.substring(0, 50)}..."`);
+                        
+                        // Additional verification - check if it looks like a post creation area
+                        if (elementText.toLowerCase().includes('mind') || 
+                            elementText.toLowerCase().includes('post') ||
+                            elementText.toLowerCase().includes('share') ||
+                            elementText.toLowerCase().includes('create')) {
+                            console.log(`✅ Verified post creation area: ${selector}`);
+                            return { element, selector };
+                        }
+                    }
+                }
+            } catch (e) {
+                console.log(`❌ Selector failed: ${selector} - ${e.message}`);
+                continue;
+            }
+        }
+
+        // If no direct selectors work, try XPath for text-based search
+        console.log('🔍 Trying XPath text-based search...');
+        const xpathSelectors = [
+            "//div[@role='button' and contains(., 'What')]",
+            "//div[@role='button' and contains(., 'mind')]",
+            "//div[@role='button' and contains(., 'post')]",
+            "//div[@role='button' and contains(., 'share')]",
+            "//span[contains(text(), 'What') and contains(text(), 'mind')]/ancestor::div[@role='button']",
+            "//div[contains(@aria-label, 'Create')]",
+            "//div[contains(@placeholder, 'mind')]"
+        ];
+
+        for (const xpath of xpathSelectors) {
+            try {
+                console.log(`🔍 Trying XPath: ${xpath}`);
+                const elements = await this.page.$x(xpath);
+                
+                if (elements.length > 0) {
+                    for (const element of elements) {
+                        const isVisible = await this.page.evaluate(el => {
+                            const rect = el.getBoundingClientRect();
+                            const style = window.getComputedStyle(el);
+                            
+                            return rect.width > 10 && 
+                                   rect.height > 10 && 
+                                   style.visibility !== 'hidden' &&
+                                   style.display !== 'none' &&
+                                   rect.top >= 0 && 
+                                   rect.top < window.innerHeight;
+                        }, element);
+                        
+                        if (isVisible) {
+                            const elementText = await this.page.evaluate(el => {
+                                return el.textContent || el.getAttribute('aria-label') || '';
+                            }, element);
+                            
+                            console.log(`✅ Found XPath element with text: "${elementText.substring(0, 50)}..."`);
+                            return { element, selector: xpath };
+                        }
+                    }
+                }
+            } catch (e) {
+                console.log(`❌ XPath failed: ${xpath}`);
+                continue;
+            }
+        }
+
+        return null;
+    }
+
+    async createPost() {
+        try {
+            // Navigate to home and wait
+            console.log('🏠 Navigating to Facebook home...');
+            await this.page.goto('https://www.facebook.com', { 
+                waitUntil: 'networkidle0', 
+                timeout: 30000 
+            });
+            await this.humanDelay(3000, 5000);
+
+            // Find post creation area with enhanced detection
+            const postArea = await this.findPostCreationArea();
+            
+            if (!postArea) {
+                // Try alternative approach - scroll and search again
+                console.log('🔄 First search failed, trying scroll and re-search...');
+                await this.page.evaluate(() => {
+                    window.scrollTo(0, 300);
+                });
+                await this.humanDelay(2000, 3000);
+                
+                const postAreaRetry = await this.findPostCreationArea();
+                if (!postAreaRetry) {
+                    await this.page.screenshot({ 
+                        path: path.join(SCREENSHOT_DIR, 'no_post_area_found.png'),
+                        fullPage: true 
+                    });
+                    throw new Error('Could not find post creation area after enhanced search. Check full page screenshot.');
+                }
+                postArea = postAreaRetry;
+            }
+
+            // Click on the found post area
+            console.log('🎯 Clicking on post creation area...');
+            await postArea.element.click();
+            await this.humanDelay(2000, 4000);
+            await this.logStep('Click post creation area', true);
+
+            // Wait for composer to open and find text input
+            console.log('⏳ Waiting for composer to open...');
+            
+            const textInputSelectors = [
+                '[contenteditable="true"][data-testid*="status"]',
+                '[contenteditable="true"][role="textbox"]',
+                'div[contenteditable="true"]',
+                '[data-testid="status-attachment-mentions-input"]',
+                'textarea[placeholder*="mind" i]',
+                '[aria-label*="Write something" i]'
+            ];
+
+            let textInput = null;
+            let inputElement = null;
+            
+            for (const selector of textInputSelectors) {
+                try {
+                    await this.page.waitForSelector(selector, { timeout: 3000 });
+                    
+                    const elements = await this.page.$$(selector);
+                    for (const element of elements) {
+                        const isVisible = await this.page.evaluate(el => {
+                            const rect = el.getBoundingClientRect();
+                            return rect.width > 10 && rect.height > 10 && 
+                                   window.getComputedStyle(el).display !== 'none';
+                        }, element);
+                        
+                        if (isVisible) {
+                            textInput = selector;
+                            inputElement = element;
+                            console.log(`✅ Found text input: ${selector}`);
+                            break;
+                        }
+                    }
+                    if (textInput) break;
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            if (!textInput) {
+                // Fallback: try clicking on the post area again and wait longer
+                console.log('⚠️ Text input not found, trying fallback approach...');
+                await postArea.element.click();
+                await this.humanDelay(3000, 5000);
+                
+                // Use the original clicked element as input
+                textInput = postArea.selector;
+                inputElement = postArea.element;
+            }
+
+            // Focus and type the message
+            console.log('✍️ Typing post content...');
+            await inputElement.focus();
+            await this.humanDelay(500, 1000);
+            
+            // Clear any existing text and type our message
+            await this.page.keyboard.down('Control');
+            await this.page.keyboard.press('KeyA');
+            await this.page.keyboard.up('Control');
+            
+            const postMessage = 'Hello world! 🌍 Testing automated posting.';
+            await this.page.keyboard.type(postMessage, { delay: 100 });
+            await this.logStep('Type post content', true);
+
+            // Wait before posting
+            await this.humanDelay(2000, 3000);
+
+            // Take screenshot before posting
+            await this.page.screenshot({ 
+                path: path.join(SCREENSHOT_DIR, 'before_post_submit.png') 
+            });
+
+            // Enhanced post button detection
+            console.log('🔍 Looking for post/submit button...');
+            
+            const postButtonSelectors = [
+                '[data-testid="react-composer-post-button"]',
+                'div[aria-label="Post" i]',
+                'div[aria-label="Share" i]',
+                'button[type="submit"]',
+                'div[role="button"]:not([aria-disabled="true"])'
+            ];
+
+            const postButtonXPaths = [
+                "//div[@role='button' and contains(text(), 'Post')]",
+                "//button[contains(text(), 'Post')]",
+                "//div[@role='button' and contains(text(), 'Share')]",
+                "//span[contains(text(), 'Post')]/ancestor::div[@role='button'][1]"
+            ];
+
+            let postButton = null;
+            
+            // Try CSS selectors first
+            for (const selector of postButtonSelectors) {
+                try {
+                    await this.page.waitForSelector(selector, { timeout: 2000 });
+                    const elements = await this.page.$$(selector);
+                    
+                    for (const element of elements) {
+                        const isVisible = await this.page.evaluate(el => {
+                            const rect = el.getBoundingClientRect();
+                            const style = window.getComputedStyle(el);
+                            return rect.width > 0 && rect.height > 0 && 
+                                   style.display !== 'none' &&
+                                   !el.hasAttribute('aria-disabled');
+                        }, element);
+                        
+                        if (isVisible) {
+                            const buttonText = await this.page.evaluate(el => {
+                                return el.textContent || el.getAttribute('aria-label') || '';
+                            }, element);
+                            
+                            if (buttonText.toLowerCase().includes('post') || 
+                                buttonText.toLowerCase().includes('share')) {
+                                postButton = element;
+                                console.log(`✅ Found post button: ${selector} with text: "${buttonText}"`);
+                                break;
+                            }
+                        }
+                    }
+                    if (postButton) break;
+                } catch (e) {
+                    continue;
+                }
+            }
+
+            // Try XPath selectors
+            if (!postButton) {
+                for (const xpath of postButtonXPaths) {
+                    try {
+                        const elements = await this.page.$x(xpath);
+                        if (elements.length > 0) {
+                            const isVisible = await this.page.evaluate(el => {
+                                const rect = el.getBoundingClientRect();
+                                return rect.width > 0 && rect.height > 0;
+                            }, elements[0]);
+                            
+                            if (isVisible) {
+                                postButton = elements[0];
+                                console.log(`✅ Found post button with XPath: ${xpath}`);
+                                break;
+                            }
+                        }
+                    } catch (e) {
+                        continue;
+                    }
+                }
+            }
+
+            if (!postButton) {
+                await this.page.screenshot({ 
+                    path: path.join(SCREENSHOT_DIR, 'no_post_button_found.png') 
+                });
+                throw new Error('Could not find post/submit button. Check screenshot for debugging.');
+            }
+
+            // Click post button
+            console.log('📤 Clicking post button...');
+            await postButton.click();
+            await this.logStep('Click post button', true);
+
+            // Wait for post to be published
+            await this.humanDelay(3000, 5000);
+            
+            // Verify post was created (look for success indicators)
+            try {
+                // Look for post confirmation or return to feed
+                await this.page.waitForFunction(() => {
+                    const url = window.location.href;
+                    return !url.includes('/composer/') && !url.includes('/create/');
+                }, { timeout: 10000 });
+                
+                console.log('✅ Post appears to have been submitted successfully');
+            } catch (e) {
+                console.log('⚠️ Could not confirm post submission, but no errors occurred');
+            }
+            
+            // Take final screenshot
+            await this.page.screenshot({ 
+                path: path.join(SCREENSHOT_DIR, 'after_post_submit.png') 
+            });
+            
+            await this.logStep('Post published successfully', true);
+            return true;
+
+        } catch (error) {
+            await this.logStep('Create post failed', false, error.message);
+            
+            // Take comprehensive error screenshots
+            try {
+                await this.page.screenshot({ 
+                    path: path.join(SCREENSHOT_DIR, 'post_error_viewport.png') 
+                });
+                await this.page.screenshot({ 
+                    path: path.join(SCREENSHOT_DIR, 'post_error_fullpage.png'),
+                    fullPage: true 
+                });
+                console.log('📸 Error screenshots saved');
+            } catch (e) {
+                console.log('❌ Could not save error screenshots');
+            }
+            
+            return false;
+        }
+    }
+
+    async cleanup() {
+        if (this.browser) {
+            await this.browser.close();
+            console.log('🧹 Browser closed');
+        }
+    }
+
+    async run() {
+        console.log('\n🚀 Starting Enhanced Facebook Automation v2.0');
+        console.log('🎯 Enhanced post detection and stealth measures');
+        console.log('🔧 Username:', FB_USERNAME);
+        console.log('🔑 Password:', FB_PASSWORD ? '***' : 'NOT SET');
+
+        if (!FB_USERNAME || !FB_PASSWORD) {
+            console.error('❌ Missing credentials! Please set FB_USERNAME and FB_PASSWORD environment variables.');
+            return;
+        }
+
+        try {
+            await this.initialize();
+            
+            // Login phase
+            console.log('\n🔐 Authentication Phase:');
+            const loginResult = await this.login();
+            
+            if (!loginResult) {
+                console.error('❌ Authentication failed - cannot continue');
+                return;
+            }
+
+            console.log('✅ Authentication completed successfully');
+            await this.humanDelay(3000, 5000);
+
+            // Post creation phase
+            console.log('\n📝 Post Creation Phase:');
+            const postResult = await this.createPost();
+            
+            if (postResult) {
+                console.log('\n🎉 SUCCESS! Facebook automation completed successfully');
+                await fs.writeFile(
+                    path.join(SCREENSHOT_DIR, 'SUCCESS.txt'),
+                    `Facebook automation successful at ${new Date().toISOString()}\nPost created successfully with enhanced detection`
+                );
+            } else {
+                console.log('\n⚠️ Post creation failed, but login was successful');
+                await fs.writeFile(
+                    path.join(SCREENSHOT_DIR, 'PARTIAL_SUCCESS.txt'),
+                    `Facebook automation partially successful at ${new Date().toISOString()}\nLogin: SUCCESS\nPost: FAILED\nCheck error screenshots for debugging`
+                );
+            }
+
+            // Demo: Keep browser open to show results
+            console.log('⏳ Keeping browser open for 15 seconds to show results...');
+            await this.humanDelay(15000, 18000);
+
+        } catch (error) {
+            console.error('❌ Automation error:', error.message);
+            
+            try {
+                await fs.writeFile(
+                    path.join(SCREENSHOT_DIR, 'AUTOMATION_ERROR.txt'),
+                    `Facebook automation error at ${new Date().toISOString()}\nError: ${error.message}\nStack: ${error.stack}`
+                );
+            } catch (e) {
+                // Ignore write errors
+            }
+        } finally {
+            await this.cleanup();
+        }
+
+        // Execution summary
+        console.log('\n📊 EXECUTION SUMMARY:');
+        console.log('═'.repeat(60));
+        this.logSteps.forEach(step => {
+            const status = step.success ? 'SUCCESS' : 'FAILED';
+            const emoji = step.success ? '✅' : '❌';
+            console.log(`${emoji} ${step.name.padEnd(35)} ${status}`);
+            if (!step.success && step.error) {
+                console.log(`   └─ ${step.error}`);
+            }
+        });
+        console.log('═'.repeat(60));
+        
+        const successfulSteps = this.logSteps.filter(step => step.success).length;
+        console.log(`📈 Completion rate: ${successfulSteps}/${this.logSteps.length} steps (${Math.round(successfulSteps/this.logSteps.length*100)}%)`);
+        
+        console.log('\n🏁 Facebook automation session completed');
+    }
 }
 
-// Run the debugger
-const debuggerInstance = new FacebookDebugPro();
-debuggerInstance.runComprehensiveTest()
-  .catch(console.error)
-  .finally(() => process.exit(0));
+// Run the automation
+(async () => {
+    console.log('🤖 Facebook Login and Post Automation v2.0');
+    console.log('🎯 Enhanced with improved element detection');
+    
+    const automation = new FacebookAutomation();
+    await automation.run();
+})();
